@@ -18,11 +18,11 @@ numpy>=1.24.0
 Pillow>=10.0.0
 
 # مكتبات قاعدة البيانات
-sqlite3
+# sqlite3 comes built-in with Python
 
 # مكتبات التصميم والواجهة
-tkinter
-PIL
+# tkinter comes built-in with Python
+# PIL is included in Pillow
 
 # مكتبات إضافية للتحليل
 lxml>=4.9.0
@@ -35,7 +35,7 @@ python-dateutil>=2.8.0
 ujson>=5.8.0
 
 # مكتبات للتعامل مع الملفات المضغوطة
-gzip
+# gzip comes built-in with Python
 
 # مكتبات للتعامل مع HTTP
 urllib3>=2.0.0

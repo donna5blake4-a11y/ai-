@@ -1,5 +1,5 @@
-# working_ai_system.py
-# نظام AI يعمل فعلاً مع البحث المباشر
+# simple_working_system.py
+# نظام مبسط يعمل مع المواقع المتاحة
 
 import asyncio
 import aiohttp
@@ -10,34 +10,19 @@ from datetime import datetime
 from bs4 import BeautifulSoup
 from typing import Dict, List, Optional
 import time
-import ssl
 
-class RealPriceSearcher:
-    """محلل أسعار حقيقي يعمل فعلاً"""
+class SimplePriceSearcher:
+    """محلل أسعار مبسط يعمل مع المواقع المتاحة"""
     
     def __init__(self):
         self.session = None
-        self.cache = {}
     
     async def __aenter__(self):
-        # إعداد SSL context للتعامل مع مشاكل الشهادات
-        ssl_context = ssl.create_default_context()
-        ssl_context.check_hostname = False
-        ssl_context.verify_mode = ssl.CERT_NONE
-        
-        # إعداد الجلسة مع SSL context
-        connector = aiohttp.TCPConnector(ssl=ssl_context)
-        timeout = aiohttp.ClientTimeout(total=15)
+        timeout = aiohttp.ClientTimeout(total=10)
         self.session = aiohttp.ClientSession(
             timeout=timeout,
-            connector=connector,
             headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.5",
-                "Accept-Encoding": "gzip, deflate",
-                "Connection": "keep-alive",
-                "Upgrade-Insecure-Requests": "1"
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
             }
         )
         return self
@@ -59,20 +44,17 @@ class RealPriceSearcher:
                 html = await response.text()
                 soup = BeautifulSoup(html, 'html.parser')
                 
-                # البحث عن الأسعار - إصلاح التحذير
-                price_elements = soup.find_all(string=re.compile(r'\d+\.?\d*\s*(?:جنيه|ج\.م|EGP|LE)'))
+                # البحث عن الأسعار في النص
+                price_pattern = re.compile(r'(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)\s*(?:جنيه|ج\.م|EGP|LE)')
+                matches = price_pattern.findall(html)
                 
-                for price_text in price_elements[:5]:  # أول 5 أسعار
-                    price = self.extract_price(price_text)
-                    if price and 100 <= price <= 50000:
-                        return price
-                
-                # البحث في عناصر أخرى
-                price_spans = soup.find_all(['span', 'div', 'p'], string=re.compile(r'\d+\.?\d*\s*(?:جنيه|ج\.م|EGP|LE)'))
-                for element in price_spans[:3]:
-                    price = self.extract_price(element.get_text())
-                    if price and 100 <= price <= 50000:
-                        return price
+                for match in matches[:5]:
+                    try:
+                        price = float(match.replace(',', ''))
+                        if 100 <= price <= 50000:
+                            return price
+                    except:
+                        continue
                 
                 return None
                 
@@ -91,83 +73,23 @@ class RealPriceSearcher:
                     return None
                 
                 html = await response.text()
-                soup = BeautifulSoup(html, 'html.parser')
                 
-                # البحث عن الأسعار
-                price_elements = soup.find_all(string=re.compile(r'\d+\.?\d*\s*(?:جنيه|ج\.م|EGP|LE)'))
+                # البحث عن الأسعار في النص
+                price_pattern = re.compile(r'(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)\s*(?:جنيه|ج\.م|EGP|LE)')
+                matches = price_pattern.findall(html)
                 
-                for price_text in price_elements[:5]:
-                    price = self.extract_price(price_text)
-                    if price and 100 <= price <= 50000:
-                        return price
-                
-                # البحث في عناصر أخرى
-                price_spans = soup.find_all(['span', 'div', 'p'], string=re.compile(r'\d+\.?\d*\s*(?:جنيه|ج\.م|EGP|LE)'))
-                for element in price_spans[:3]:
-                    price = self.extract_price(element.get_text())
-                    if price and 100 <= price <= 50000:
-                        return price
+                for match in matches[:5]:
+                    try:
+                        price = float(match.replace(',', ''))
+                        if 100 <= price <= 50000:
+                            return price
+                    except:
+                        continue
                 
                 return None
                 
         except Exception as e:
             print(f"Kanbkam error: {e}")
-            return None
-    
-    async def search_pricena(self, product_name: str) -> Optional[float]:
-        """البحث في Pricena - محاولة بدون SSL"""
-        try:
-            query = self.clean_product_name(product_name)
-            # محاولة URL مختلف
-            url = f"http://egypt.pricena.com/search?q={query}"
-            
-            async with self.session.get(url) as response:
-                if response.status != 200:
-                    return None
-                
-                html = await response.text()
-                soup = BeautifulSoup(html, 'html.parser')
-                
-                # البحث عن الأسعار
-                price_elements = soup.find_all(string=re.compile(r'\d+\.?\d*\s*(?:جنيه|ج\.م|EGP|LE)'))
-                
-                for price_text in price_elements[:5]:
-                    price = self.extract_price(price_text)
-                    if price and 100 <= price <= 50000:
-                        return price
-                
-                return None
-                
-        except Exception as e:
-            print(f"Pricena error: {e}")
-            return None
-    
-    async def search_carrefour(self, product_name: str) -> Optional[float]:
-        """البحث في Carrefour - محاولة بدون SSL"""
-        try:
-            query = self.clean_product_name(product_name)
-            # محاولة URL مختلف
-            url = f"http://www.carrefour.eg/search?q={query}"
-            
-            async with self.session.get(url) as response:
-                if response.status != 200:
-                    return None
-                
-                html = await response.text()
-                soup = BeautifulSoup(html, 'html.parser')
-                
-                # البحث عن الأسعار
-                price_elements = soup.find_all(string=re.compile(r'\d+\.?\d*\s*(?:جنيه|ج\.م|EGP|LE)'))
-                
-                for price_text in price_elements[:5]:
-                    price = self.extract_price(price_text)
-                    if price and 100 <= price <= 50000:
-                        return price
-                
-                return None
-                
-        except Exception as e:
-            print(f"Carrefour error: {e}")
             return None
     
     def clean_product_name(self, name: str) -> str:
@@ -179,50 +101,21 @@ class RealPriceSearcher:
         # أخذ أول 3 كلمات مهمة
         return " ".join(words[:3])
     
-    def extract_price(self, text: str) -> Optional[float]:
-        """استخراج السعر من النص"""
-        if not text:
-            return None
-        
-        # أنماط الأسعار
-        patterns = [
-            r'(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)\s*(?:جنيه|ج\.م|EGP|LE|L\.E)',
-            r'جنيه\s*(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)',
-            r'(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)\s*EGP',
-            r'(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)\s*LE',
-            r'(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)',  # أي رقم
-        ]
-        
-        for pattern in patterns:
-            match = re.search(pattern, text, re.IGNORECASE)
-            if match:
-                price_str = match.group(1).replace(',', '')
-                try:
-                    price = float(price_str)
-                    if 5 <= price <= 50000:  # سعر معقول
-                        return price
-                except ValueError:
-                    continue
-        
-        return None
-    
-    async def search_all_retailers(self, product_name: str) -> Dict:
-        """البحث في جميع المواقع"""
+    async def search_working_retailers(self, product_name: str) -> Dict:
+        """البحث في المواقع التي تعمل"""
         print(f"🔍 البحث عن: {product_name}")
         start_time = time.time()
         
-        # البحث المتوازي
+        # البحث في المواقع التي تعمل
         tasks = [
             self.search_noon(product_name),
-            self.search_kanbkam(product_name),
-            self.search_pricena(product_name),
-            self.search_carrefour(product_name)
+            self.search_kanbkam(product_name)
         ]
         
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
         # تجميع النتائج
-        retailers = ["Noon", "Kanbkam", "Pricena", "Carrefour"]
+        retailers = ["Noon", "Kanbkam"]
         prices = {}
         
         for i, result in enumerate(results):
@@ -244,13 +137,13 @@ class RealPriceSearcher:
             "total_found": len(prices)
         }
 
-class WorkingAIAnalyzer:
-    """محلل AI يعمل فعلاً"""
+class SimpleAIAnalyzer:
+    """محلل AI مبسط"""
     
     def __init__(self):
-        self.confidence_threshold = 0.70  # 70%
-        self.min_competitors = 2
-        self.min_savings = 15  # 15%
+        self.confidence_threshold = 0.70
+        self.min_competitors = 1  # تخفيض لأننا نبحث في موقعين فقط
+        self.min_savings = 10  # تخفيض قليلاً
     
     async def analyze_deal(self, product_data: dict) -> Dict:
         """تحليل العرض"""
@@ -263,9 +156,9 @@ class WorkingAIAnalyzer:
         if not amazon_price or not product_name:
             return self._empty_analysis(amazon_price, amazon_discount)
         
-        # البحث في المواقع المصرية
-        async with RealPriceSearcher() as searcher:
-            search_results = await searcher.search_all_retailers(product_name)
+        # البحث في المواقع المتاحة
+        async with SimplePriceSearcher() as searcher:
+            search_results = await searcher.search_working_retailers(product_name)
         
         prices = search_results['prices']
         
@@ -316,18 +209,18 @@ class WorkingAIAnalyzer:
         """حساب درجة العرض"""
         score = 0
         
-        # خصم أمازون (25%)
-        score += min(amazon_discount * 0.5, 25)
+        # خصم أمازون (30%)
+        score += min(amazon_discount * 0.6, 30)
         
-        # التوفير من السوق (35%)
-        score += min(savings * 0.7, 35)
+        # التوفير من السوق (40%)
+        score += min(savings * 0.8, 40)
         
-        # عدد المنافسين (25%)
-        score += min(competitors * 5, 25)
+        # عدد المنافسين (20%)
+        score += min(competitors * 10, 20)
         
-        # عامل إضافي (15%)
-        if competitors >= 3 and savings >= 20:
-            score += 15
+        # عامل إضافي (10%)
+        if competitors >= 2 and savings >= 15:
+            score += 10
         
         return min(score, 100)
     
@@ -348,9 +241,9 @@ class WorkingAIAnalyzer:
         success_rate = competitors / total_searched
         
         # عامل عدد المنافسين
-        competitor_factor = min(competitors / 4, 1.0)
+        competitor_factor = min(competitors / 2, 1.0)  # تعديل لأننا نبحث في موقعين فقط
         
-        return (success_rate * 0.6) + (competitor_factor * 0.4)
+        return (success_rate * 0.7) + (competitor_factor * 0.3)
     
     def _generate_recommendation(self, deal_score: float, savings: float, competitors: int) -> str:
         """إنشاء توصية"""
@@ -377,8 +270,8 @@ class WorkingAIAnalyzer:
         if amazon_discount > 90:
             risks.append("خصم مفرط - قد يكون خطأ في السعر")
         
-        if len(prices) < 2:
-            risks.append("قلة المنافسين - صعوبة في التأكد")
+        if len(prices) < 1:
+            risks.append("لا توجد مقارنات متاحة")
         
         if prices:
             price_variance = (max(prices.values()) - min(prices.values())) / min(prices.values())
@@ -405,10 +298,10 @@ class WorkingAIAnalyzer:
             "search_time": 0
         }
 
-class WorkingDatabaseManager:
-    """مدير قاعدة بيانات يعمل فعلاً"""
+class SimpleDatabaseManager:
+    """مدير قاعدة بيانات مبسط"""
     
-    def __init__(self, db_path="working_products.db"):
+    def __init__(self, db_path="simple_products.db"):
         self.db_path = db_path
         self.connection = sqlite3.connect(db_path)
         self.init_database()
@@ -491,13 +384,13 @@ class WorkingDatabaseManager:
         return deals
 
 # دالة اختبار شاملة
-async def test_working_system():
-    """اختبار النظام العامل"""
-    print("🚀 اختبار النظام العامل...")
+async def test_simple_system():
+    """اختبار النظام المبسط"""
+    print("🚀 اختبار النظام المبسط...")
     
     # إنشاء المحلل
-    analyzer = WorkingAIAnalyzer()
-    db_manager = WorkingDatabaseManager()
+    analyzer = SimpleAIAnalyzer()
+    db_manager = SimpleDatabaseManager()
     
     # منتجات تجريبية
     test_products = [
@@ -520,6 +413,16 @@ async def test_working_system():
             "current_price": 45000,
             "strike_price": 53000,
             "discount_percent": 15
+        },
+        {
+            "asin": "B0C9XYZ123",
+            "name": "Sony WH-1000XM5 Headphones",
+            "url": "https://www.amazon.eg/test3",
+            "img": "https://test.com/image3.jpg",
+            "section": "Electronics",
+            "current_price": 6500,
+            "strike_price": 8500,
+            "discount_percent": 24
         }
     ]
     
@@ -561,4 +464,4 @@ async def test_working_system():
         print(f"     💬 {deal['recommendation']}")
 
 if __name__ == "__main__":
-    asyncio.run(test_working_system())
+    asyncio.run(test_simple_system())

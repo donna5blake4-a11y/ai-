@@ -1,460 +1,416 @@
 # ai_price_analyzer.py
-# محرك AI ذكي لتحليل الأسعار ومقارنتها
+# محلل AI سريع للعروض مع درجة ثقة 70%+
 
 import asyncio
-import aiohttp
-import re
+import sqlite3
 import json
-import time
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
-from bs4 import BeautifulSoup
-import sqlite3
-from egyptian_retailers import EGYPTIAN_RETAILERS, get_search_query
+from egyptian_retailers import EgyptianRetailerSearcher, calculate_name_similarity
 
 @dataclass
 class PriceComparison:
     """نتيجة مقارنة السعر"""
     retailer: str
     price: float
-    currency: str = "EGP"
-    confidence: float = 0.0
-    url: str = ""
-    in_stock: bool = True
-    shipping_cost: float = 0.0
+    similarity: float
+    confidence: float
 
 @dataclass
 class DealAnalysis:
     """تحليل شامل للعرض"""
     amazon_price: float
-    amazon_original_price: float
     amazon_discount: float
-    competitor_prices: List[PriceComparison]
-    average_market_price: float
-    price_rank: int  # ترتيب أمازون بين المنافسين
-    deal_score: float  # من 0 إلى 100
+    market_avg_price: float
+    savings_percentage: float
+    competitors_count: int
+    deal_score: float
     is_real_deal: bool
     confidence: float
     recommendation: str
     risk_factors: List[str]
+    price_comparisons: List[PriceComparison]
+    analysis_time: float
 
 class AIPriceAnalyzer:
-    """محلل الأسعار الذكي"""
+    """محلل AI للأسعار والعروض"""
     
     def __init__(self, db_path="price_analysis.db"):
         self.db_path = db_path
-        self.session = None
         self.init_database()
-        
+        self.confidence_threshold = 0.70  # 70% درجة ثقة
+        self.min_competitors = 2  # حد أدنى للمنافسين
+        self.min_savings = 15  # حد أدنى للتوفير 15%
+    
     def init_database(self):
-        """تهيئة قاعدة البيانات للتحليل"""
+        """تهيئة قاعدة البيانات"""
         conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
         
-        # جدول نتائج التحليل
-        cursor.execute('''
+        # جدول تحليل الأسعار
+        conn.execute('''
             CREATE TABLE IF NOT EXISTS price_analysis (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 asin TEXT,
-                product_name TEXT,
                 amazon_price REAL,
-                amazon_original_price REAL,
                 amazon_discount REAL,
-                average_market_price REAL,
+                market_avg_price REAL,
+                savings_percentage REAL,
+                competitors_count INTEGER,
                 deal_score REAL,
                 is_real_deal BOOLEAN,
                 confidence REAL,
                 recommendation TEXT,
-                analysis_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                risk_factors TEXT,
+                analysis_time REAL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
         
-        # جدول أسعار المنافسين
-        cursor.execute('''
+        # جدول مقارنات الأسعار
+        conn.execute('''
             CREATE TABLE IF NOT EXISTS competitor_prices (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 analysis_id INTEGER,
                 retailer TEXT,
                 price REAL,
+                similarity REAL,
                 confidence REAL,
-                url TEXT,
                 FOREIGN KEY (analysis_id) REFERENCES price_analysis (id)
             )
         ''')
         
+        # فهارس للسرعة
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_asin ON price_analysis(asin)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_deal_score ON price_analysis(deal_score)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_is_real_deal ON price_analysis(is_real_deal)')
+        
         conn.commit()
         conn.close()
     
-    async def start_session(self):
-        """بدء جلسة HTTP"""
-        if not self.session:
-            timeout = aiohttp.ClientTimeout(total=30)
-            self.session = aiohttp.ClientSession(timeout=timeout)
-    
-    async def close_session(self):
-        """إغلاق جلسة HTTP"""
-        if self.session:
-            await self.session.close()
-            self.session = None
-    
-    async def search_product_on_retailer(self, retailer_name: str, product_name: str, 
-                                       category: str = None) -> List[PriceComparison]:
-        """البحث عن منتج في موقع معين"""
-        if retailer_name not in EGYPTIAN_RETAILERS:
-            return []
-        
-        retailer = EGYPTIAN_RETAILERS[retailer_name]
-        search_query = get_search_query(product_name, category)
-        search_url = retailer["search_url"].format(query=search_query)
-        
-        try:
-            await self.start_session()
-            async with self.session.get(search_url, headers=retailer["headers"]) as response:
-                if response.status != 200:
-                    return []
-                
-                html = await response.text()
-                return self.parse_retailer_results(html, retailer, retailer_name)
-                
-        except Exception as e:
-            print(f"Error searching {retailer_name}: {e}")
-            return []
-    
-    def parse_retailer_results(self, html: str, retailer: dict, retailer_name: str) -> List[PriceComparison]:
-        """تحليل نتائج البحث من موقع معين"""
-        soup = BeautifulSoup(html, 'html.parser')
-        results = []
-        
-        # البحث عن المنتجات في الصفحة
-        product_elements = soup.select(retailer.get("product_container", ".product, .item"))
-        
-        for element in product_elements[:5]:  # أخذ أول 5 نتائج
-            try:
-                # استخراج السعر
-                price_el = element.select_one(retailer["price_selector"])
-                if not price_el:
-                    continue
-                
-                price_text = price_el.get_text().strip()
-                price = self.extract_price(price_text)
-                if not price:
-                    continue
-                
-                # استخراج الاسم
-                name_el = element.select_one(retailer["name_selector"])
-                name = name_el.get_text().strip() if name_el else ""
-                
-                # استخراج الرابط
-                link_el = element.select_one(retailer["link_selector"])
-                url = ""
-                if link_el:
-                    href = link_el.get("href", "")
-                    if href.startswith("/"):
-                        url = retailer["base_url"] + href
-                    else:
-                        url = href
-                
-                # حساب الثقة بناءً على تطابق الاسم
-                confidence = self.calculate_name_similarity(name, product_name)
-                
-                if confidence > 0.3:  # فقط النتائج المتطابقة نسبياً
-                    results.append(PriceComparison(
-                        retailer=retailer_name,
-                        price=price,
-                        confidence=confidence,
-                        url=url
-                    ))
-                    
-            except Exception as e:
-                print(f"Error parsing {retailer_name} result: {e}")
-                continue
-        
-        return results
-    
-    def extract_price(self, price_text: str) -> Optional[float]:
-        """استخراج السعر من النص"""
-        # إزالة الرموز والمسافات
-        cleaned = re.sub(r'[^\d.,]', '', price_text)
-        
-        # تحويل الفاصلة العشرية
-        if ',' in cleaned and '.' in cleaned:
-            # تنسيق أوروبي: 1.234,56
-            cleaned = cleaned.replace('.', '').replace(',', '.')
-        elif ',' in cleaned:
-            # تنسيق أمريكي: 1,234.56
-            cleaned = cleaned.replace(',', '')
-        
-        try:
-            return float(cleaned)
-        except:
-            return None
-    
-    def calculate_name_similarity(self, name1: str, name2: str) -> float:
-        """حساب درجة تطابق الأسماء"""
-        # تحويل إلى أحرف صغيرة
-        name1 = name1.lower()
-        name2 = name2.lower()
-        
-        # استخراج الكلمات المهمة
-        words1 = set(re.findall(r'\b\w{3,}\b', name1))
-        words2 = set(re.findall(r'\b\w{3,}\b', name2))
-        
-        if not words1 or not words2:
-            return 0.0
-        
-        # حساب التداخل
-        intersection = words1.intersection(words2)
-        union = words1.union(words2)
-        
-        if not union:
-            return 0.0
-        
-        return len(intersection) / len(union)
-    
     async def analyze_deal(self, product_data: dict) -> DealAnalysis:
         """تحليل شامل للعرض"""
-        product_name = product_data.get("name", "")
-        amazon_price = product_data.get("price", 0)
-        amazon_original_price = product_data.get("strike_price", amazon_price)
-        amazon_discount = product_data.get("discount_percent", 0)
-        category = product_data.get("section", "")
+        start_time = datetime.now()
         
-        # البحث في جميع المواقع
-        all_prices = []
-        tasks = []
+        # استخراج بيانات المنتج
+        asin = product_data.get('asin', '')
+        product_name = product_data.get('name', '')
+        amazon_price = product_data.get('current_price', 0)
+        amazon_discount = product_data.get('discount_percent', 0)
+        section = product_data.get('section', '')
         
-        for retailer_name in EGYPTIAN_RETAILERS.keys():
-            task = self.search_product_on_retailer(retailer_name, product_name, category)
-            tasks.append(task)
+        if not amazon_price or not product_name:
+            return self._create_empty_analysis(amazon_price, amazon_discount)
         
-        # انتظار جميع النتائج
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        # البحث في المواقع المصرية
+        async with EgyptianRetailerSearcher() as searcher:
+            search_results = await searcher.search_all_retailers(product_name)
         
-        for result in results:
-            if isinstance(result, list):
-                all_prices.extend(result)
+        # تحليل النتائج
+        price_comparisons = self._analyze_search_results(search_results, product_name)
         
-        # فلترة النتائج عالية الثقة
-        high_confidence_prices = [p for p in all_prices if p.confidence > 0.5]
-        
-        if not high_confidence_prices:
-            # إذا لم نجد نتائج عالية الثقة، نأخذ الأفضل
-            high_confidence_prices = sorted(all_prices, key=lambda x: x.confidence, reverse=True)[:3]
-        
-        # حساب متوسط السعر في السوق
-        if high_confidence_prices:
-            market_prices = [p.price for p in high_confidence_prices if p.price > 0]
-            average_market_price = sum(market_prices) / len(market_prices)
-        else:
-            average_market_price = amazon_price
-        
-        # ترتيب أمازون بين المنافسين
-        price_rank = 1
-        for price_comp in high_confidence_prices:
-            if price_comp.price < amazon_price:
-                price_rank += 1
+        # حساب الإحصائيات
+        market_avg_price = self._calculate_market_average(price_comparisons)
+        savings_percentage = self._calculate_savings(amazon_price, market_avg_price)
+        competitors_count = len([p for p in price_comparisons if p.confidence >= self.confidence_threshold])
         
         # حساب درجة العرض
-        deal_score = self.calculate_deal_score(
-            amazon_price, amazon_original_price, average_market_price,
-            len(high_confidence_prices), price_rank
+        deal_score = self._calculate_deal_score(
+            amazon_discount, savings_percentage, competitors_count, price_comparisons
         )
         
-        # تحديد ما إذا كان العرض حقيقي
-        is_real_deal = self.is_real_deal(
-            amazon_price, amazon_original_price, average_market_price,
-            deal_score, len(high_confidence_prices)
-        )
+        # تحديد إذا العرض حقيقي
+        is_real_deal = self._is_real_deal(deal_score, competitors_count, savings_percentage)
         
-        # حساب مستوى الثقة
-        confidence = self.calculate_confidence(high_confidence_prices, amazon_price)
+        # حساب درجة الثقة
+        confidence = self._calculate_confidence(price_comparisons, competitors_count)
         
-        # التوصية
-        recommendation = self.generate_recommendation(
-            deal_score, price_rank, amazon_discount, len(high_confidence_prices)
-        )
+        # إنشاء التوصية
+        recommendation = self._generate_recommendation(deal_score, savings_percentage, competitors_count)
         
-        # عوامل المخاطرة
-        risk_factors = self.identify_risk_factors(
-            amazon_price, amazon_original_price, high_confidence_prices
-        )
+        # تحديد عوامل المخاطر
+        risk_factors = self._identify_risk_factors(amazon_price, amazon_discount, price_comparisons)
         
-        return DealAnalysis(
+        # حساب وقت التحليل
+        analysis_time = (datetime.now() - start_time).total_seconds()
+        
+        # إنشاء نتيجة التحليل
+        analysis = DealAnalysis(
             amazon_price=amazon_price,
-            amazon_original_price=amazon_original_price,
             amazon_discount=amazon_discount,
-            competitor_prices=high_confidence_prices,
-            average_market_price=average_market_price,
-            price_rank=price_rank,
+            market_avg_price=market_avg_price,
+            savings_percentage=savings_percentage,
+            competitors_count=competitors_count,
             deal_score=deal_score,
             is_real_deal=is_real_deal,
             confidence=confidence,
             recommendation=recommendation,
-            risk_factors=risk_factors
+            risk_factors=risk_factors,
+            price_comparisons=price_comparisons,
+            analysis_time=analysis_time
         )
+        
+        # حفظ التحليل
+        self._save_analysis(asin, analysis)
+        
+        return analysis
     
-    def calculate_deal_score(self, current_price: float, original_price: float, 
-                           market_price: float, competitors_count: int, 
-                           price_rank: int) -> float:
-        """حساب درجة العرض من 0 إلى 100"""
-        score = 0.0
+    def _analyze_search_results(self, search_results: dict, product_name: str) -> List[PriceComparison]:
+        """تحليل نتائج البحث"""
+        price_comparisons = []
         
-        # عامل الخصم (40%)
-        if original_price > current_price:
-            discount_percent = ((original_price - current_price) / original_price) * 100
-            score += min(discount_percent * 0.4, 40)
+        for retailer, result in search_results['results'].items():
+            if 'error' in result:
+                continue
+            
+            best_match = result.get('best_match')
+            if not best_match:
+                continue
+            
+            # حساب درجة الثقة بناءً على التشابه
+            similarity = best_match.get('similarity', 0)
+            confidence = min(similarity * 1.2, 1.0)  # تحسين درجة الثقة
+            
+            # فلترة النتائج منخفضة الثقة
+            if confidence < 0.3:  # 30% حد أدنى
+                continue
+            
+            price_comparison = PriceComparison(
+                retailer=retailer,
+                price=best_match['price'],
+                similarity=similarity,
+                confidence=confidence
+            )
+            
+            price_comparisons.append(price_comparison)
         
-        # عامل السعر مقارنة بالسوق (30%)
-        if market_price > 0:
-            market_savings = ((market_price - current_price) / market_price) * 100
-            score += max(market_savings * 0.3, 0)
+        # ترتيب حسب درجة الثقة
+        price_comparisons.sort(key=lambda x: x.confidence, reverse=True)
         
-        # عامل عدد المنافسين (15%)
-        score += min(competitors_count * 3, 15)
+        return price_comparisons
+    
+    def _calculate_market_average(self, price_comparisons: List[PriceComparison]) -> float:
+        """حساب متوسط سعر السوق"""
+        if not price_comparisons:
+            return 0
         
-        # عامل الترتيب (15%)
-        rank_score = max(15 - (price_rank - 1) * 2, 0)
-        score += rank_score
+        # استخدام فقط النتائج عالية الثقة
+        high_confidence_prices = [
+            p.price for p in price_comparisons 
+            if p.confidence >= self.confidence_threshold
+        ]
+        
+        if not high_confidence_prices:
+            # استخدام جميع الأسعار إذا لم تكن هناك نتائج عالية الثقة
+            high_confidence_prices = [p.price for p in price_comparisons]
+        
+        if not high_confidence_prices:
+            return 0
+        
+        return sum(high_confidence_prices) / len(high_confidence_prices)
+    
+    def _calculate_savings(self, amazon_price: float, market_avg: float) -> float:
+        """حساب نسبة التوفير"""
+        if not market_avg or market_avg <= 0:
+            return 0
+        
+        savings = ((market_avg - amazon_price) / market_avg) * 100
+        return max(0, savings)
+    
+    def _calculate_deal_score(self, amazon_discount: float, savings_percentage: float, 
+                            competitors_count: int, price_comparisons: List[PriceComparison]) -> float:
+        """حساب درجة العرض (0-100)"""
+        score = 0
+        
+        # 1. خصم أمازون (25%)
+        amazon_discount_score = min(amazon_discount * 0.5, 25)
+        score += amazon_discount_score
+        
+        # 2. التوفير من السوق (35%)
+        market_savings_score = min(savings_percentage * 0.7, 35)
+        score += market_savings_score
+        
+        # 3. عدد المنافسين (25%)
+        competitors_score = min(competitors_count * 5, 25)
+        score += competitors_score
+        
+        # 4. جودة المقارنة (15%)
+        avg_confidence = sum(p.confidence for p in price_comparisons) / len(price_comparisons) if price_comparisons else 0
+        confidence_score = avg_confidence * 15
+        score += confidence_score
         
         return min(score, 100)
     
-    def is_real_deal(self, current_price: float, original_price: float, 
-                    market_price: float, deal_score: float, 
-                    competitors_count: int) -> bool:
-        """تحديد ما إذا كان العرض حقيقي"""
+    def _is_real_deal(self, deal_score: float, competitors_count: int, savings_percentage: float) -> bool:
+        """تحديد إذا العرض حقيقي"""
         # شروط العرض الحقيقي
         conditions = [
-            deal_score >= 60,  # درجة عالية
-            competitors_count >= 2,  # مقارنة مع موقعين على الأقل
-            current_price > 10,  # سعر معقول
-            current_price < original_price * 0.9,  # خصم حقيقي
+            deal_score >= 70,  # درجة عرض 70%+
+            competitors_count >= self.min_competitors,  # 2+ منافس
+            savings_percentage >= self.min_savings  # توفير 15%+
         ]
-        
-        # إذا كان السعر أقل من متوسط السوق
-        if market_price > 0:
-            conditions.append(current_price <= market_price * 0.95)
         
         return all(conditions)
     
-    def calculate_confidence(self, competitor_prices: List[PriceComparison], 
-                           amazon_price: float) -> float:
-        """حساب مستوى الثقة في التحليل"""
-        if not competitor_prices:
-            return 0.3
+    def _calculate_confidence(self, price_comparisons: List[PriceComparison], competitors_count: int) -> float:
+        """حساب درجة الثقة الإجمالية"""
+        if not price_comparisons:
+            return 0
         
-        # متوسط ثقة النتائج
-        avg_confidence = sum(p.confidence for p in competitor_prices) / len(competitor_prices)
+        # متوسط درجة الثقة للمقارنات
+        avg_confidence = sum(p.confidence for p in price_comparisons) / len(price_comparisons)
         
-        # عدد النتائج
-        count_factor = min(len(competitor_prices) / 5, 1.0)
+        # عامل عدد المنافسين
+        competitor_factor = min(competitors_count / 4, 1.0)
         
-        # تناسق الأسعار
-        prices = [p.price for p in competitor_prices if p.price > 0]
-        if len(prices) > 1:
-            price_variance = (max(prices) - min(prices)) / (sum(prices) / len(prices))
-            consistency_factor = max(1 - price_variance, 0.5)
-        else:
-            consistency_factor = 0.7
+        # درجة الثقة النهائية
+        final_confidence = (avg_confidence * 0.7) + (competitor_factor * 0.3)
         
-        return (avg_confidence * 0.5 + count_factor * 0.3 + consistency_factor * 0.2)
+        return min(final_confidence, 1.0)
     
-    def generate_recommendation(self, deal_score: float, price_rank: int, 
-                              discount_percent: float, competitors_count: int) -> str:
-        """توليد توصية ذكية"""
-        if deal_score >= 80:
-            return "🔥 عرض استثنائي! سارع بالشراء"
+    def _generate_recommendation(self, deal_score: float, savings_percentage: float, competitors_count: int) -> str:
+        """إنشاء توصية ذكية"""
+        if deal_score >= 90:
+            return "🔥 عرض استثنائي! لا تفوت هذه الفرصة"
+        elif deal_score >= 80:
+            return "💥 عرض ممتاز! أمازون أرخص بكثير من السوق"
+        elif deal_score >= 70:
+            return "🎉 عرض جيد! توفير حقيقي من السوق"
         elif deal_score >= 60:
-            return "🎉 عرض ممتاز، أنصح بالشراء"
-        elif deal_score >= 40:
-            return "✨ عرض جيد، فكر في الشراء"
-        elif deal_score >= 20:
-            return "📊 عرض عادي، انتظر عروض أفضل"
+            return "✨ عرض مقبول، لكن يمكن انتظار خصم أكبر"
+        elif deal_score >= 50:
+            return "📊 عرض عادي، الأسعار متقاربة"
         else:
-            return "⚠️ عرض ضعيف، لا أنصح بالشراء"
+            return "⚠️ عرض ضعيف، الأسعار متشابهة أو أعلى"
     
-    def identify_risk_factors(self, current_price: float, original_price: float,
-                            competitor_prices: List[PriceComparison]) -> List[str]:
-        """تحديد عوامل المخاطرة"""
-        risks = []
+    def _identify_risk_factors(self, amazon_price: float, amazon_discount: float, 
+                              price_comparisons: List[PriceComparison]) -> List[str]:
+        """تحديد عوامل المخاطر"""
+        risk_factors = []
         
-        if current_price < 20:
-            risks.append("سعر منخفض جداً - قد يكون منتج رديء")
+        # سعر منخفض جداً
+        if amazon_price < 50 and amazon_discount > 80:
+            risk_factors.append("سعر منخفض جداً - قد يكون منتج مستعمل أو معيب")
         
-        if original_price > current_price * 3:
-            risks.append("خصم كبير جداً - تحقق من جودة المنتج")
+        # خصم مفرط
+        if amazon_discount > 90:
+            risk_factors.append("خصم مفرط - قد يكون خطأ في السعر أو منتج منتهي الصلاحية")
         
-        if not competitor_prices:
-            risks.append("لا توجد مقارنة كافية مع منافسين")
+        # قلة المنافسين
+        high_confidence_count = len([p for p in price_comparisons if p.confidence >= self.confidence_threshold])
+        if high_confidence_count < 2:
+            risk_factors.append("قلة المنافسين - صعوبة في التأكد من جودة العرض")
         
-        # تحقق من تناسق الأسعار
-        if competitor_prices:
-            prices = [p.price for p in competitor_prices if p.price > 0]
+        # تباين كبير في الأسعار
+        if price_comparisons:
+            prices = [p.price for p in price_comparisons if p.confidence >= 0.5]
             if len(prices) > 1:
-                price_range = max(prices) - min(prices)
-                if price_range > min(prices) * 0.5:
-                    risks.append("تفاوت كبير في الأسعار بين المنافسين")
+                price_variance = (max(prices) - min(prices)) / min(prices)
+                if price_variance > 0.5:  # تباين أكثر من 50%
+                    risk_factors.append("تباين كبير في الأسعار - قد يكون اختلاف في المواصفات")
         
-        return risks
+        return risk_factors
     
-    def save_analysis(self, asin: str, product_name: str, analysis: DealAnalysis):
-        """حفظ نتائج التحليل في قاعدة البيانات"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        # حفظ التحليل الرئيسي
-        cursor.execute('''
-            INSERT INTO price_analysis 
-            (asin, product_name, amazon_price, amazon_original_price, amazon_discount,
-             average_market_price, deal_score, is_real_deal, confidence, recommendation)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            asin, product_name, analysis.amazon_price, analysis.amazon_original_price,
-            analysis.amazon_discount, analysis.average_market_price, analysis.deal_score,
-            analysis.is_real_deal, analysis.confidence, analysis.recommendation
-        ))
-        
-        analysis_id = cursor.lastrowid
-        
-        # حفظ أسعار المنافسين
-        for comp in analysis.competitor_prices:
-            cursor.execute('''
-                INSERT INTO competitor_prices 
-                (analysis_id, retailer, price, confidence, url)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (analysis_id, comp.retailer, comp.price, comp.confidence, comp.url))
-        
-        conn.commit()
-        conn.close()
+    def _create_empty_analysis(self, amazon_price: float, amazon_discount: float) -> DealAnalysis:
+        """إنشاء تحليل فارغ"""
+        return DealAnalysis(
+            amazon_price=amazon_price,
+            amazon_discount=amazon_discount,
+            market_avg_price=0,
+            savings_percentage=0,
+            competitors_count=0,
+            deal_score=0,
+            is_real_deal=False,
+            confidence=0,
+            recommendation="لا توجد بيانات كافية للتحليل",
+            risk_factors=["لا توجد مقارنات متاحة"],
+            price_comparisons=[],
+            analysis_time=0
+        )
+    
+    def _save_analysis(self, asin: str, analysis: DealAnalysis):
+        """حفظ التحليل في قاعدة البيانات"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            
+            # حفظ التحليل الرئيسي
+            cursor = conn.execute('''
+                INSERT INTO price_analysis 
+                (asin, amazon_price, amazon_discount, market_avg_price, savings_percentage,
+                 competitors_count, deal_score, is_real_deal, confidence, recommendation,
+                 risk_factors, analysis_time)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                asin, analysis.amazon_price, analysis.amazon_discount, analysis.market_avg_price,
+                analysis.savings_percentage, analysis.competitors_count, analysis.deal_score,
+                analysis.is_real_deal, analysis.confidence, analysis.recommendation,
+                json.dumps(analysis.risk_factors), analysis.analysis_time
+            ))
+            
+            analysis_id = cursor.lastrowid
+            
+            # حفظ مقارنات الأسعار
+            for comparison in analysis.price_comparisons:
+                conn.execute('''
+                    INSERT INTO competitor_prices 
+                    (analysis_id, retailer, price, similarity, confidence)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (
+                    analysis_id, comparison.retailer, comparison.price,
+                    comparison.similarity, comparison.confidence
+                ))
+            
+            conn.commit()
+            conn.close()
+            
+        except Exception as e:
+            print(f"Error saving analysis: {e}")
     
     def get_analysis_summary(self, analysis: DealAnalysis) -> str:
-        """توليد ملخص التحليل"""
+        """إنشاء ملخص التحليل"""
         summary = f"""
-🔍 **تحليل العرض الذكي**
+🎯 تحليل العرض:
+💰 سعر أمازون: {analysis.amazon_price:,.0f} جنيه
+🎉 خصم أمازون: {analysis.amazon_discount:.1f}%
+🏪 متوسط السوق: {analysis.market_avg_price:,.0f} جنيه
+💡 التوفير: {analysis.savings_percentage:.1f}%
+📊 درجة العرض: {analysis.deal_score:.1f}/100
+✅ عرض حقيقي: {'نعم' if analysis.is_real_deal else 'لا'}
+🎯 درجة الثقة: {analysis.confidence:.1%}
+💬 التوصية: {analysis.recommendation}
+⏱️ وقت التحليل: {analysis.analysis_time:.2f}s
 
-💰 **السعر في أمازون**: {analysis.amazon_price:,.0f} جنيه
-📉 **السعر الأصلي**: {analysis.amazon_original_price:,.0f} جنيه  
-🎯 **نسبة الخصم**: {analysis.amazon_discount:.1f}%
-
-📊 **مقارنة السوق**:
-• متوسط السعر في السوق: {analysis.average_market_price:,.0f} جنيه
-• ترتيب أمازون: {analysis.price_rank} من {len(analysis.competitor_prices) + 1}
-• درجة العرض: {analysis.deal_score:.1f}/100
-
-🎯 **التوصية**: {analysis.recommendation}
-
-✅ **العرض حقيقي**: {'نعم' if analysis.is_real_deal else 'لا'}
-🔒 **مستوى الثقة**: {analysis.confidence:.1%}
-
-📋 **أسعار المنافسين**:
+🏪 المنافسون ({analysis.competitors_count}):
 """
         
-        for comp in analysis.competitor_prices:
-            summary += f"• {comp.retailer}: {comp.price:,.0f} جنيه (ثقة: {comp.confidence:.1%})\n"
+        for comparison in analysis.price_comparisons[:3]:  # أول 3 منافسين
+            summary += f"   • {comparison.retailer}: {comparison.price:,.0f} جنيه (ثقة: {comparison.confidence:.1%})\n"
         
         if analysis.risk_factors:
-            summary += "\n⚠️ **عوامل المخاطرة**:\n"
+            summary += f"\n⚠️ عوامل المخاطر:\n"
             for risk in analysis.risk_factors:
-                summary += f"• {risk}\n"
+                summary += f"   • {risk}\n"
         
         return summary
+
+# دالة مساعدة للاختبار
+async def test_analyzer():
+    """اختبار المحلل"""
+    analyzer = AIPriceAnalyzer()
+    
+    # منتج تجريبي
+    test_product = {
+        "asin": "B0C7CQT9ZS",
+        "name": "Samsung Galaxy A54 5G",
+        "current_price": 8500,
+        "discount_percent": 25,
+        "section": "Electronics"
+    }
+    
+    print("🔍 بدء تحليل العرض...")
+    analysis = await analyzer.analyze_deal(test_product)
+    
+    print(analyzer.get_analysis_summary(analysis))
+
+if __name__ == "__main__":
+    asyncio.run(test_analyzer())

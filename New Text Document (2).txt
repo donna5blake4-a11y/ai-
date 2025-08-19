@@ -1,0 +1,353 @@
+# migrate_json_to_db.py
+import json
+import sqlite3
+from datetime import datetime
+import os
+import gzip
+from pathlib import Path
+
+def migrate_json_to_sqlite(json_file="amz_products.json", 
+                          db_file="amz_products.db", 
+                          batch_size=1000):
+    """نقل البيانات من JSON إلى SQLite"""
+    
+    print(f"🔄 Starting migration from {json_file} to {db_file}")
+    
+    # التحقق من وجود ملف JSON
+    if not os.path.exists(json_file):
+        print(f"❌ JSON file {json_file} not found!")
+        return False
+    
+    # إنشاء قاعدة البيانات
+    conn = sqlite3.connect(db_file)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA cache_size=50000")
+    
+    # إنشاء الجداول
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS products (
+            asin TEXT PRIMARY KEY,
+            name TEXT,
+            url TEXT,
+            img TEXT,
+            section TEXT,
+            current_price REAL,
+            strike_price REAL,
+            discount_percent REAL,
+            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS price_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            asin TEXT,
+            price REAL,
+            date TEXT,
+            time TEXT,
+            FOREIGN KEY (asin) REFERENCES products (asin)
+        )
+    ''')
+    
+    # إنشاء الفهارس
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_asin ON products(asin)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_section ON products(section)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_discount ON products(discount_percent)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_price_history_asin ON price_history(asin)')
+    
+    try:
+        # قراءة ملف JSON
+        print("📖 Reading JSON file...")
+        with open(json_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        print(f"✅ Found {len(data)} products in JSON")
+        
+        # تجهيز البيانات للنقل
+        products_batch = []
+        history_batch = []
+        processed_count = 0
+        
+        for asin, product in data.items():
+            try:
+                # بيانات المنتج الأساسية
+                products_batch.append((
+                    asin,
+                    product.get('name', '?'),
+                    product.get('url', ''),
+                    product.get('img', ''),
+                    product.get('section', 'Unknown'),
+                    product.get('price'),
+                    product.get('strike_price'),
+                    product.get('discount_percent', 0)
+                ))
+                
+                # تاريخ الأسعار
+                price_history = product.get('price_history', [])
+                for entry in price_history:
+                    history_batch.append((
+                        asin,
+                        entry.get('price'),
+                        entry.get('date'),
+                        entry.get('time', '00:00')
+                    ))
+                
+                # حفظ دفعي
+                if len(products_batch) >= batch_size:
+                    conn.executemany('''
+                        INSERT OR REPLACE INTO products 
+                        (asin, name, url, img, section, current_price, strike_price, discount_percent)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', products_batch)
+                    
+                    if history_batch:
+                        conn.executemany('''
+                            INSERT INTO price_history (asin, price, date, time)
+                            VALUES (?, ?, ?, ?)
+                        ''', history_batch)
+                    
+                    conn.commit()
+                    processed_count += len(products_batch)
+                    print(f"✅ Migrated {processed_count} products...")
+                    
+                    products_batch = []
+                    history_batch = []
+                    
+            except Exception as e:
+                print(f"⚠️ Error processing {asin}: {e}")
+                continue
+        
+        # حفظ البيانات المتبقية
+        if products_batch:
+            conn.executemany('''
+                INSERT OR REPLACE INTO products 
+                (asin, name, url, img, section, current_price, strike_price, discount_percent)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', products_batch)
+            
+            if history_batch:
+                conn.executemany('''
+                    INSERT INTO price_history (asin, price, date, time)
+                    VALUES (?, ?, ?, ?)
+                ''', history_batch)
+            
+            conn.commit()
+            processed_count += len(products_batch)
+        
+        print(f"🎉 Migration completed! {processed_count} products migrated")
+        
+        # إحصائيات نهائية
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM products")
+        products_count = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT COUNT(*) FROM price_history")
+        history_count = cursor.fetchone()[0]
+        
+        print(f"📊 Database stats:")
+        print(f"   - Products: {products_count:,}")
+        print(f"   - Price history entries: {history_count:,}")
+        
+        # حجم الملفات
+        old_size = os.path.getsize(json_file) / (1024*1024)
+        new_size = os.path.getsize(db_file) / (1024*1024)
+        
+        print(f"💾 File sizes:")
+        print(f"   - JSON: {old_size:.1f} MB")
+        print(f"   - SQLite: {new_size:.1f} MB")
+        print(f"   - Space saved: {old_size - new_size:.1f} MB")
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ Migration failed: {e}")
+        return False
+    finally:
+        conn.close()
+
+def create_backup_json(db_file="amz_products.db", 
+                      output_file="backup_products.json.gz",
+                      compress=True):
+    """إنشاء نسخة احتياطية مضغوطة من قاعدة البيانات"""
+    
+    print(f"💾 Creating backup from {db_file}")
+    
+    conn = sqlite3.connect(db_file)
+    cursor = conn.cursor()
+    
+    # جلب جميع المنتجات
+    cursor.execute("SELECT * FROM products")
+    products = cursor.fetchall()
+    
+    columns = [desc[0] for desc in cursor.description]
+    products_dict = {}
+    
+    print(f"📦 Processing {len(products)} products...")
+    
+    for i, product in enumerate(products):
+        product_dict = dict(zip(columns, product))
+        asin = product_dict['asin']
+        
+        # جلب تاريخ الأسعار
+        cursor.execute('''
+            SELECT price, date, time FROM price_history 
+            WHERE asin = ? ORDER BY date DESC, time DESC
+        ''', (asin,))
+        history = cursor.fetchall()
+        
+        product_dict['price_history'] = [
+            {"price": h[0], "date": h[1], "time": h[2]} 
+            for h in history
+        ]
+        
+        products_dict[asin] = product_dict
+        
+        if (i + 1) % 10000 == 0:
+            print(f"✅ Processed {i + 1} products...")
+    
+    # حفظ الملف
+    if compress:
+        import gzip
+        with gzip.open(output_file, 'wt', encoding='utf-8') as f:
+            json.dump(products_dict, f, ensure_ascii=False, indent=2)
+    else:
+        with open(output_file.replace('.gz', ''), 'w', encoding='utf-8') as f:
+            json.dump(products_dict, f, ensure_ascii=False, indent=2)
+    
+    conn.close()
+    
+    file_size = os.path.getsize(output_file) / (1024*1024)
+    print(f"✅ Backup created: {output_file} ({file_size:.1f} MB)")
+
+def optimize_database(db_file="amz_products.db"):
+    """تحسين قاعدة البيانات وتنظيفها"""
+    
+    print(f"🔧 Optimizing database {db_file}")
+    
+    conn = sqlite3.connect(db_file)
+    
+    # إزالة التكرارات
+    print("🧹 Removing duplicates...")
+    conn.execute('''
+        DELETE FROM price_history 
+        WHERE id NOT IN (
+            SELECT MIN(id) 
+            FROM price_history 
+            GROUP BY asin, date, price
+        )
+    ''')
+    
+    # إزالة المنتجات بدون أسعار
+    print("🧹 Removing products without prices...")
+    conn.execute('DELETE FROM products WHERE current_price IS NULL OR current_price <= 0')
+    
+    # تحديث الإحصائيات
+    print("📊 Updating statistics...")
+    conn.execute('ANALYZE')
+    
+    # ضغط قاعدة البيانات
+    print("🗜️ Compacting database...")
+    conn.execute('VACUUM')
+    
+    conn.commit()
+    
+    # إحصائيات نهائية
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM products")
+    products_count = cursor.fetchone()[0]
+    
+    cursor.execute("SELECT COUNT(*) FROM price_history")
+    history_count = cursor.fetchone()[0]
+    
+    print(f"✅ Optimization complete!")
+    print(f"   - Products: {products_count:,}")
+    print(f"   - Price history: {history_count:,}")
+    
+    conn.close()
+
+def get_database_stats(db_file="amz_products.db"):
+    """عرض إحصائيات قاعدة البيانات"""
+    
+    if not os.path.exists(db_file):
+        print(f"❌ Database {db_file} not found!")
+        return
+    
+    conn = sqlite3.connect(db_file)
+    cursor = conn.cursor()
+    
+    print(f"📊 Database Statistics for {db_file}:")
+    print("=" * 50)
+    
+    # إجمالي المنتجات
+    cursor.execute("SELECT COUNT(*) FROM products")
+    total_products = cursor.fetchone()[0]
+    print(f"📦 Total Products: {total_products:,}")
+    
+    # المنتجات المخفضة
+    cursor.execute("SELECT COUNT(*) FROM products WHERE discount_percent > 0")
+    discounted = cursor.fetchone()[0]
+    print(f"🎉 Products with Discounts: {discounted:,}")
+    
+    # أعلى خصم
+    cursor.execute("SELECT MAX(discount_percent) FROM products")
+    max_discount = cursor.fetchone()[0]
+    print(f"🔥 Highest Discount: {max_discount:.1f}%")
+    
+    # المنتجات حسب القسم
+    cursor.execute('''
+        SELECT section, COUNT(*) 
+        FROM products 
+        GROUP BY section 
+        ORDER BY COUNT(*) DESC
+    ''')
+    sections = cursor.fetchall()
+    print(f"\n📂 Products by Section:")
+    for section, count in sections[:10]:  # أعلى 10 أقسام
+        print(f"   - {section}: {count:,}")
+    
+    # إجمالي تاريخ الأسعار
+    cursor.execute("SELECT COUNT(*) FROM price_history")
+    total_history = cursor.fetchone()[0]
+    print(f"\n💾 Price History Records: {total_history:,}")
+    
+    # حجم الملف
+    file_size = os.path.getsize(db_file) / (1024*1024)
+    print(f"💽 Database Size: {file_size:.1f} MB")
+    
+    conn.close()
+
+if __name__ == "__main__":
+    import sys
+    
+    if len(sys.argv) < 2:
+        print("Usage:")
+        print("  python migrate_json_to_db.py migrate [json_file] [db_file]")
+        print("  python migrate_json_to_db.py backup [db_file] [output_file]")
+        print("  python migrate_json_to_db.py optimize [db_file]")
+        print("  python migrate_json_to_db.py stats [db_file]")
+        sys.exit(1)
+    
+    command = sys.argv[1]
+    
+    if command == "migrate":
+        json_file = sys.argv[2] if len(sys.argv) > 2 else "amz_products.json"
+        db_file = sys.argv[3] if len(sys.argv) > 3 else "amz_products.db"
+        migrate_json_to_sqlite(json_file, db_file)
+        
+    elif command == "backup":
+        db_file = sys.argv[2] if len(sys.argv) > 2 else "amz_products.db"
+        output_file = sys.argv[3] if len(sys.argv) > 3 else "backup_products.json.gz"
+        create_backup_json(db_file, output_file)
+        
+    elif command == "optimize":
+        db_file = sys.argv[2] if len(sys.argv) > 2 else "amz_products.db"
+        optimize_database(db_file)
+        
+    elif command == "stats":
+        db_file = sys.argv[2] if len(sys.argv) > 2 else "amz_products.db"
+        get_database_stats(db_file)
+        
+    else:
+        print(f"❌ Unknown command: {command}")

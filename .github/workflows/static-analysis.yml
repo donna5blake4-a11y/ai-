@@ -1,0 +1,339 @@
+name: Static Analysis
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  code-quality:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v4
+      with:
+        python-version: 3.10
+    
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -r requirements-dev.txt
+    
+    - name: Run Black code formatter check
+      run: |
+        black --check --diff .
+    
+    - name: Run isort import sorting check
+      run: |
+        isort --check-only --diff .
+    
+    - name: Run Flake8 linting
+      run: |
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=88 --statistics
+    
+    - name: Run MyPy type checking
+      run: |
+        mypy . --ignore-missing-imports --disallow-untyped-defs --disallow-incomplete-defs
+    
+    - name: Run Pylint
+      run: |
+        pylint **/*.py --disable=C0114,C0115,C0116 --max-line-length=88
+    
+    - name: Run Radon complexity analysis
+      run: |
+        radon cc . -a -nc
+        radon mi . -nc
+        radon hal . -nc
+    
+    - name: Run McCabe complexity check
+      run: |
+        python -m mccabe **/*.py --min 10
+    
+    - name: Generate code coverage report
+      run: |
+        pytest tests/ --cov=. --cov-report=xml --cov-report=html --cov-fail-under=80
+    
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: static-analysis
+        name: codecov-static-analysis
+        fail_ci_if_error: true
+    
+    - name: Upload coverage report
+      uses: actions/upload-artifact@v3
+      with:
+        name: coverage-report
+        path: htmlcov/
+
+  documentation-check:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v4
+      with:
+        python-version: 3.10
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -r requirements-dev.txt
+    
+    - name: Check docstring coverage
+      run: |
+        interrogate --fail-under=80 --ignore-init-method --ignore-init-module --ignore-semiprivate --ignore-private --ignore-property-decorators --ignore-magic --ignore-nested-functions --ignore-nested-classes --ignore-setters --ignore-regex=^_ .
+    
+    - name: Check for missing docstrings
+      run: |
+        python -c "
+        import ast
+        import os
+        
+        def check_docstrings(file_path):
+            with open(file_path, 'r', encoding='utf-8') as f:
+                tree = ast.parse(f.read())
+            
+            missing_docs = []
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.FunctionDef, ast.ClassDef, ast.Module)):
+                    if not ast.get_docstring(node):
+                        if isinstance(node, ast.FunctionDef):
+                            missing_docs.append(f'Function: {node.name}')
+                        elif isinstance(node, ast.ClassDef):
+                            missing_docs.append(f'Class: {node.name}')
+            
+            if missing_docs:
+                print(f'Missing docstrings in {file_path}:')
+                for doc in missing_docs:
+                    print(f'  - {doc}')
+                return len(missing_docs)
+            return 0
+        
+        total_missing = 0
+        for root, dirs, files in os.walk('.'):
+            if 'tests' in root or '__pycache__' in root or '.git' in root:
+                continue
+            for file in files:
+                if file.endswith('.py'):
+                    total_missing += check_docstrings(os.path.join(root, file))
+        
+        if total_missing > 0:
+            print(f'Total missing docstrings: {total_missing}')
+            exit(1)
+        else:
+            print('All functions and classes have docstrings!')
+        "
+    
+    - name: Validate README files
+      run: |
+        # Check if README files exist and are not empty
+        for readme in README.md tests/README.md examples/README.md; do
+          if [ ! -f "$readme" ]; then
+            echo "Missing $readme"
+            exit 1
+          fi
+          if [ ! -s "$readme" ]; then
+            echo "$readme is empty"
+            exit 1
+          fi
+        done
+        
+        # Check for broken links in README files
+        python -c "
+        import re
+        import requests
+        from urllib.parse import urlparse
+        
+        def check_links_in_file(filename):
+            with open(filename, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Find all URLs
+            urls = re.findall(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', content)
+            
+            broken_links = []
+            for url in urls:
+                try:
+                    response = requests.head(url, timeout=10, allow_redirects=True)
+                    if response.status_code >= 400:
+                        broken_links.append(url)
+                except:
+                    broken_links.append(url)
+            
+            if broken_links:
+                print(f'Broken links in {filename}:')
+                for link in broken_links:
+                    print(f'  - {link}')
+                return len(broken_links)
+            return 0
+        
+        total_broken = 0
+        for readme in ['README.md', 'tests/README.md', 'examples/README.md']:
+            try:
+                total_broken += check_links_in_file(readme)
+            except FileNotFoundError:
+                pass
+        
+        if total_broken > 0:
+            print(f'Total broken links: {total_broken}')
+            exit(1)
+        else:
+            print('All links are working!')
+        "
+
+  dependency-analysis:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v4
+      with:
+        python-version: 3.10
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -r requirements-dev.txt
+    
+    - name: Generate dependency graph
+      run: |
+        pip install pipdeptree
+        pipdeptree --graph-output dot > dependency-graph.dot
+        pipdeptree --json > dependency-tree.json
+    
+    - name: Check for unused dependencies
+      run: |
+        pip install pip-check
+        pip-check --strict
+    
+    - name: Check for outdated dependencies
+      run: |
+        pip list --outdated --format=json > outdated-deps.json
+        echo "Outdated dependencies:"
+        cat outdated-deps.json
+    
+    - name: Upload dependency reports
+      uses: actions/upload-artifact@v3
+      with:
+        name: dependency-reports
+        path: |
+          dependency-graph.dot
+          dependency-tree.json
+          outdated-deps.json
+
+  performance-analysis:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v4
+      with:
+        python-version: 3.10
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -r requirements-dev.txt
+    
+    - name: Run performance profiling
+      run: |
+        python -m cProfile -o profile.stats -m pytest tests/test_integration.py::TestSystemIntegration::test_database_performance
+    
+    - name: Analyze performance data
+      run: |
+        python -c "
+        import pstats
+        from pstats import SortKey
+        
+        p = pstats.Stats('profile.stats')
+        p.sort_stats(SortKey.TIME)
+        p.print_stats(20)
+        
+        # Check for slow functions
+        slow_functions = []
+        for func, (cc, nc, tt, ct, callers) in p.stats.items():
+            if tt > 0.1:  # Functions taking more than 0.1 seconds
+                slow_functions.append((func, tt))
+        
+        if slow_functions:
+            print('Slow functions detected:')
+            for func, time in sorted(slow_functions, key=lambda x: x[1], reverse=True):
+                print(f'  {func}: {time:.3f}s')
+        else:
+            print('No slow functions detected!')
+        "
+    
+    - name: Run memory profiling
+      run: |
+        python -c "
+        import tracemalloc
+        import sys
+        from enhanced_database import EnhancedDatabaseManager
+        import tempfile
+        
+        tracemalloc.start()
+        
+        # Simulate database operations
+        with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as tmp:
+            db_path = tmp.name
+        
+        try:
+            db_manager = EnhancedDatabaseManager(db_path)
+            db_manager.initialize_database()
+            
+            # Add many products
+            for i in range(1000):
+                from enhanced_database import Product
+                product = Product(
+                    asin=f'TEST{i}',
+                    name=f'Product {i}',
+                    current_price=100.0 + i,
+                    strike_price=120.0 + i,
+                    discount_percent=10.0,
+                )
+                db_manager.add_product(product)
+            
+            db_manager.close()
+            
+        finally:
+            import os
+            if os.path.exists(db_path):
+                os.unlink(db_path)
+        
+        current, peak = tracemalloc.get_traced_memory()
+        print(f'Current memory usage: {current / 1024 / 1024:.1f} MB')
+        print(f'Peak memory usage: {peak / 1024 / 1024:.1f} MB')
+        
+        if peak > 100 * 1024 * 1024:  # More than 100MB
+            print('WARNING: High memory usage detected!')
+            sys.exit(1)
+        else:
+            print('Memory usage is acceptable.')
+        
+        tracemalloc.stop()
+        "

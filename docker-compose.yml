@@ -1,0 +1,85 @@
+version: '3.8'
+
+services:
+  ai-deals-manager:
+    build: .
+    container_name: ai-deals-manager
+    restart: unless-stopped
+    environment:
+      - PYTHONPATH=/app
+      - TZ=Africa/Cairo
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./telegram_config.json:/app/telegram_config.json:ro
+      - ./ai_config.json:/app/ai_config.json:ro
+    networks:
+      - ai-deals-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Optional: Redis for caching (if needed)
+  redis:
+    image: redis:7-alpine
+    container_name: ai-deals-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - ai-deals-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Optional: PostgreSQL for advanced database (if needed)
+  postgres:
+    image: postgres:15-alpine
+    container_name: ai-deals-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ai_deals
+      POSTGRES_USER: aideals
+      POSTGRES_PASSWORD: aideals123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - ai-deals-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aideals -d ai_deals"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Optional: Nginx for web interface (if needed)
+  nginx:
+    image: nginx:alpine
+    container_name: ai-deals-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - ai-deals-manager
+    networks:
+      - ai-deals-network
+
+volumes:
+  redis_data:
+  postgres_data:
+
+networks:
+  ai-deals-network:
+    driver: bridge

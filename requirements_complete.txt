@@ -1,0 +1,25 @@
+# requirements_complete.txt
+# متطلبات النظام المتكامل
+
+# المكتبات الأساسية
+aiohttp==3.9.1
+beautifulsoup4==4.12.2
+requests==2.31.0
+google-generativeai==0.3.2
+
+# واجهة المستخدم
+tkinter
+
+# معالجة البيانات
+sqlite3
+json
+re
+datetime
+typing
+threading
+asyncio
+time
+random
+
+# تحليل النص
+html.parser

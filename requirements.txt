@@ -1,0 +1,50 @@
+# requirements.txt
+# مكتبات المشروع المحسن مع AI
+
+# المكتبات الأساسية
+customtkinter>=5.2.0
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+aiohttp>=3.8.0
+asyncio>=3.4.3
+
+# مكتبات الكشط
+playwright>=1.40.0
+selenium>=4.15.0
+
+# مكتبات معالجة البيانات
+pandas>=2.1.0
+numpy>=1.24.0
+Pillow>=10.0.0
+
+# مكتبات قاعدة البيانات
+# sqlite3 comes built-in with Python
+
+# مكتبات التصميم والواجهة
+# tkinter comes built-in with Python
+# PIL is included in Pillow
+
+# مكتبات إضافية للتحليل
+lxml>=4.9.0
+html5lib>=1.1
+
+# مكتبات للتعامل مع التواريخ
+python-dateutil>=2.8.0
+
+# مكتبات للتعامل مع JSON
+ujson>=5.8.0
+
+# مكتبات للتعامل مع الملفات المضغوطة
+# gzip comes built-in with Python
+
+# مكتبات للتعامل مع HTTP
+urllib3>=2.0.0
+
+# مكتبات للتعامل مع الترميز
+chardet>=5.2.0
+
+# مكتبات للتعامل مع التوقيت
+pytz>=2023.3
+
+# مكتبات للتعامل مع التعبيرات النمطية
+regex>=2023.8.0

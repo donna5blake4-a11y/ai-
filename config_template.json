@@ -1,0 +1,167 @@
+{
+  "_comment": "AI-Enhanced Amazon Deal Analyzer - Configuration Template",
+  "_instructions": "Copy this file to 'config.json' and fill in your values",
+  
+  "api_keys": {
+    "gemini_api_key": "YOUR_GEMINI_API_KEY_HERE",
+    "_gemini_help": "Get your key from: https://makersuite.google.com/app/apikey"
+  },
+  
+  "database": {
+    "file": "amz_products.db",
+    "backup_enabled": true,
+    "backup_interval_hours": 24,
+    "optimize_on_startup": true,
+    "max_connections": 10
+  },
+  
+  "ai_analysis": {
+    "enabled": true,
+    "model": "gemini-pro",
+    "max_tokens": 1000,
+    "temperature": 0.3,
+    "min_score_threshold": 7.0,
+    "max_deals_per_analysis": 20,
+    "analysis_interval_minutes": 30,
+    "auto_analysis": false,
+    "parallel_processing": true,
+    "max_workers": 3
+  },
+  
+  "price_comparison": {
+    "enabled": true,
+    "sites": [
+      "jumia",
+      "noon",
+      "btech",
+      "carrefour",
+      "souq"
+    ],
+    "max_results_per_site": 10,
+    "timeout_seconds": 15,
+    "delay_between_requests": 2,
+    "max_retries": 3,
+    "use_selenium": true,
+    "headless_browser": true
+  },
+  
+  "telegram_bot": {
+    "enabled": false,
+    "bot_token": "YOUR_BOT_TOKEN_HERE",
+    "users": ["USER_ID_1", "USER_ID_2"],
+    "daily_reports": {
+      "enabled": true,
+      "time": "09:00",
+      "timezone": "Africa/Cairo"
+    },
+    "notifications": {
+      "price_drops": true,
+      "high_quality_deals": true,
+      "daily_summary": true,
+      "system_alerts": true
+    },
+    "message_limits": {
+      "max_deals_per_message": 1,
+      "max_messages_per_hour": 10,
+      "delay_between_messages": 2
+    }
+  },
+  
+  "web_scraping": {
+    "user_agents": [
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    ],
+    "headers": {
+      "Accept-Language": "ar,en-US;q=0.9,en;q=0.8",
+      "Accept-Encoding": "gzip, deflate, br",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Connection": "keep-alive"
+    },
+    "selenium_options": [
+      "--headless",
+      "--no-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+      "--window-size=1920,1080"
+    ]
+  },
+  
+  "logging": {
+    "level": "INFO",
+    "file": "ai_deal_analyzer.log",
+    "max_size_mb": 10,
+    "backup_count": 5,
+    "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    "console_output": true
+  },
+  
+  "gui": {
+    "theme": "dark",
+    "color_scheme": "blue",
+    "window_size": "1400x900",
+    "auto_refresh_interval": 300,
+    "chart_update_interval": 60,
+    "max_deals_in_table": 50
+  },
+  
+  "data_migration": {
+    "default_batch_size": 1000,
+    "progress_update_interval": 100,
+    "backup_before_migration": true,
+    "optimize_after_migration": true,
+    "validate_data": true
+  },
+  
+  "performance": {
+    "max_concurrent_requests": 5,
+    "request_timeout": 30,
+    "cache_enabled": true,
+    "cache_duration_hours": 1,
+    "memory_limit_mb": 512
+  },
+  
+  "security": {
+    "encrypt_api_keys": false,
+    "rate_limiting": {
+      "enabled": true,
+      "requests_per_minute": 60,
+      "burst_limit": 10
+    },
+    "user_agent_rotation": true,
+    "proxy_support": false
+  },
+  
+  "alerts": {
+    "price_drop_threshold": 10,
+    "discount_threshold": 20,
+    "ai_score_threshold": 8.0,
+    "stock_alerts": false,
+    "email_notifications": false
+  },
+  
+  "export": {
+    "formats": ["json", "csv", "excel"],
+    "include_images": false,
+    "include_price_history": true,
+    "max_records": 10000
+  },
+  
+  "backup": {
+    "enabled": true,
+    "schedule": "daily",
+    "time": "02:00",
+    "retention_days": 30,
+    "compression": true,
+    "location": "backups/"
+  },
+  
+  "debug": {
+    "enabled": false,
+    "save_requests": false,
+    "save_responses": false,
+    "detailed_logging": false,
+    "performance_monitoring": false
+  }
+}

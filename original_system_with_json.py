@@ -34,32 +34,32 @@ class OriginalSystemWithJSON:
             'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         ]
         
-        # مصادر الكشط (نفس النظام الشغال)
+        # مصادر الكشط (أمازون فقط كبائع)
         self.scraping_sources = [
             {
                 'name': 'Amazon Egypt Electronics',
-                'url': 'https://www.amazon.eg/s?i=electronics&rh=p_36%3A100-10000&s=price-desc-rank&page={}',
+                'url': 'https://www.amazon.eg/s?i=electronics&rh=p_36%3A100-10000,p_6%3AA1RKKUPIHCS9HS&s=price-desc-rank&page={}',
                 'category': 'Electronics'
             },
             {
                 'name': 'Amazon Egypt Home',
-                'url': 'https://www.amazon.eg/s?i=garden&rh=p_36%3A50-5000&s=price-desc-rank&page={}',
+                'url': 'https://www.amazon.eg/s?i=garden&rh=p_36%3A50-5000,p_6%3AA1RKKUPIHCS9HS&s=price-desc-rank&page={}',
                 'category': 'Home & Garden'
             },
             {
                 'name': 'Amazon Egypt Beauty',
-                'url': 'https://www.amazon.eg/s?i=beauty&rh=p_36%3A30-3000&s=price-desc-rank&page={}',
+                'url': 'https://www.amazon.eg/s?i=beauty&rh=p_36%3A30-3000,p_6%3AA1RKKUPIHCS9HS&s=price-desc-rank&page={}',
                 'category': 'Beauty'
             },
             {
-                'name': 'Today Deals',
-                'url': 'https://www.amazon.eg/gp/goldbox?ref_=nav_cs_gb&page={}',
-                'category': 'Special Deals'
+                'name': 'Amazon Official Store',
+                'url': 'https://www.amazon.eg/s?me=A1ZVRGNO5AYLOV&rh=p_36%3A100-10000&page={}',
+                'category': 'Amazon Store'
             },
             {
-                'name': 'Lightning Deals',
-                'url': 'https://www.amazon.eg/s?k=lightning+deal&page={}',
-                'category': 'Lightning Deals'
+                'name': 'Amazon Prime Deals',
+                'url': 'https://www.amazon.eg/s?rh=p_85%3A2470955031,p_6%3AA1RKKUPIHCS9HS&page={}',
+                'category': 'Prime Deals'
             }
         ]
     
@@ -296,6 +296,10 @@ class OriginalSystemWithJSON:
             product_url = self.extract_product_url(item, asin)
             image_url = self.extract_image_url(item)
             
+            # التحقق من أن البائع هو أمازون
+            if not self.is_amazon_seller(item):
+                return None
+            
             # تحليل جودة سريع (نفس النظام الأصلي)
             quality_score = self.quick_quality_analysis(name, current_price, discount_percent)
             
@@ -405,6 +409,59 @@ class OriginalSystemWithJSON:
                    img_elem.get('data-lazy-src') or "")
         
         return ""
+    
+    def is_amazon_seller(self, item):
+        """التحقق من أن البائع هو أمازون"""
+        
+        try:
+            # البحث عن مؤشرات البائع في النص
+            item_text = item.get_text().lower()
+            
+            # مؤشرات أن البائع هو أمازون
+            amazon_indicators = [
+                'sold by amazon',
+                'ships from amazon', 
+                'fulfilled by amazon',
+                'amazon.eg',
+                'prime',
+                'free shipping with prime'
+            ]
+            
+            # مؤشرات البائعين الآخرين (نرفضها)
+            third_party_indicators = [
+                'sold by:',
+                'ships from:',
+                'other sellers',
+                'marketplace seller',
+                'third party'
+            ]
+            
+            # إذا وجدنا مؤشر أمازون واضح، نقبل
+            for indicator in amazon_indicators:
+                if indicator in item_text:
+                    print(f"✅ بائع أمازون مؤكد: {indicator}")
+                    return True
+            
+            # إذا وجدنا مؤشر بائع آخر، نرفض
+            for indicator in third_party_indicators:
+                if indicator in item_text:
+                    print(f"❌ بائع آخر مرفوض: {indicator}")
+                    return False
+            
+            # فحص إضافي: البحث عن اسم البائع في HTML
+            seller_elements = item.find_all(['span', 'div'], string=re.compile(r'sold by|ships from', re.IGNORECASE))
+            for elem in seller_elements:
+                text = elem.get_text().lower()
+                if 'amazon' not in text and ('sold by' in text or 'ships from' in text):
+                    print(f"❌ بائع آخر في العنصر: {text}")
+                    return False
+            
+            # إذا لم نجد أي مؤشر واضح، نقبل (معظم المنتجات من أمازون)
+            return True
+            
+        except Exception as e:
+            # في حالة الخطأ، نقبل للأمان
+            return True
     
     def parse_price_safe(self, price_text):
         """تحليل آمن للأسعار (نفس النظام الأصلي)"""

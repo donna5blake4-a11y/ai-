@@ -41,27 +41,27 @@ class InstantImageSystem:
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0'
         ]
         
-        # مصادر الكشط (نفس النظام الشغال)
+        # مصادر الكشط (أمازون فقط كبائع)
         self.scraping_sources = [
             {
                 'name': 'Amazon Egypt Electronics',
-                'url': 'https://www.amazon.eg/s?i=electronics&rh=p_36%3A100-10000&s=price-desc-rank&page={}',
+                'url': 'https://www.amazon.eg/s?i=electronics&rh=p_36%3A100-10000,p_6%3AA1RKKUPIHCS9HS&s=price-desc-rank&page={}',
                 'category': 'Electronics'
             },
             {
                 'name': 'Amazon Egypt Home',
-                'url': 'https://www.amazon.eg/s?i=garden&rh=p_36%3A50-5000&s=price-desc-rank&page={}',
+                'url': 'https://www.amazon.eg/s?i=garden&rh=p_36%3A50-5000,p_6%3AA1RKKUPIHCS9HS&s=price-desc-rank&page={}',
                 'category': 'Home & Garden'
             },
             {
                 'name': 'Amazon Egypt Beauty',
-                'url': 'https://www.amazon.eg/s?i=beauty&rh=p_36%3A30-3000&s=price-desc-rank&page={}',
+                'url': 'https://www.amazon.eg/s?i=beauty&rh=p_36%3A30-3000,p_6%3AA1RKKUPIHCS9HS&s=price-desc-rank&page={}',
                 'category': 'Beauty'
             },
             {
-                'name': 'Today Deals',
-                'url': 'https://www.amazon.eg/gp/goldbox?ref_=nav_cs_gb&page={}',
-                'category': 'Special Deals'
+                'name': 'Amazon Only Deals',
+                'url': 'https://www.amazon.eg/s?me=A1ZVRGNO5AYLOV&rh=p_36%3A100-10000&page={}',
+                'category': 'Amazon Deals'
             }
         ]
         
@@ -469,6 +469,10 @@ class InstantImageSystem:
             product_url = self.extract_product_url(item, asin)
             image_url = self.extract_image_url(item)
             
+            # التحقق من أن البائع هو أمازون
+            if not self.is_amazon_seller(item):
+                return None
+            
             # تحليل جودة سريع
             quality_score = self.quick_quality_analysis(name, current_price, discount_percent)
             
@@ -590,6 +594,47 @@ class InstantImageSystem:
                    img_elem.get('data-lazy-src') or "")
         
         return ""
+    
+    def is_amazon_seller(self, item):
+        """التحقق من أن البائع هو أمازون"""
+        
+        try:
+            # البحث عن مؤشرات البائع في النص
+            item_text = item.get_text().lower()
+            
+            # مؤشرات أن البائع هو أمازون
+            amazon_indicators = [
+                'sold by amazon',
+                'ships from amazon',
+                'fulfilled by amazon',
+                'amazon.eg',
+                'prime',
+                'free shipping'
+            ]
+            
+            # مؤشرات البائعين الآخرين (نرفضها)
+            other_seller_indicators = [
+                'sold by',
+                'ships from',
+                'fulfilled by'
+            ]
+            
+            # إذا وجدنا مؤشر أمازون، نقبل
+            for indicator in amazon_indicators:
+                if indicator in item_text:
+                    return True
+            
+            # إذا وجدنا مؤشر بائع آخر بدون أمازون، نرفض
+            for indicator in other_seller_indicators:
+                if indicator in item_text and 'amazon' not in item_text:
+                    return False
+            
+            # إذا لم نجد أي مؤشر واضح، نفترض أنه أمازون (للأمان)
+            return True
+            
+        except Exception as e:
+            # في حالة الخطأ، نفترض أنه أمازون
+            return True
     
     def parse_price_safe(self, price_text):
         """تحليل آمن للأسعار"""

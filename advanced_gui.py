@@ -10,11 +10,13 @@ import webbrowser
 import os
 import time
 
-# استيراد النظام الأصلي المحسن
+# استيراد النظام الأصلي المحسن والنظام الفوري
 try:
     from original_system_with_json import OriginalSystemWithJSON
+    from instant_image_system import InstantImageSystem
 except ImportError:
     OriginalSystemWithJSON = None
+    InstantImageSystem = None
 
 class AdvancedGUI:
     def __init__(self):
@@ -50,6 +52,7 @@ class AdvancedGUI:
         # تهيئة النظام
         if OriginalSystemWithJSON:
             self.system = OriginalSystemWithJSON()
+            self.instant_system = InstantImageSystem() if InstantImageSystem else None
             self.apply_settings_to_system()
     
     def setup_advanced_gui(self):
@@ -116,6 +119,19 @@ class AdvancedGUI:
             height=3
         )
         self.start_btn.pack(side="left", padx=10)
+        
+        # زر النظام الفوري مع الصور
+        self.instant_btn = tk.Button(
+            main_controls_frame,
+            text="⚡ Instant + Images",
+            command=self.start_instant_system,
+            font=("Arial", 16, "bold"),
+            bg="#ff6600",
+            fg="#ffffff",
+            width=20,
+            height=3
+        )
+        self.instant_btn.pack(side="left", padx=10)
         
         # زر الإيقاف
         self.stop_btn = tk.Button(
@@ -772,6 +788,39 @@ class AdvancedGUI:
         current_time = datetime.now().strftime("%H:%M:%S")
         self.log_message(f"🚀 [{current_time}] بدء النظام بالإعدادات المحدثة...")
     
+    def start_instant_system(self):
+        """بدء النظام الفوري مع الصور"""
+        
+        if self.is_running:
+            messagebox.showwarning("تحذير", "النظام يعمل بالفعل!")
+            return
+        
+        if not self.instant_system:
+            messagebox.showerror("خطأ", "النظام الفوري غير متاح!")
+            return
+        
+        # تطبيق الإعدادات على النظام الفوري
+        self.instant_system.min_discount = self.settings['min_discount']
+        self.instant_system.max_discount = self.settings['max_discount']
+        self.instant_system.min_price = self.settings['min_price']
+        self.instant_system.max_price = self.settings['max_price']
+        
+        # تغيير حالة الأزرار
+        self.start_btn.config(state="disabled")
+        self.instant_btn.config(state="disabled")
+        self.stop_btn.config(state="normal")
+        self.is_running = True
+        
+        # بدء شريط التقدم
+        self.progress_bar.start()
+        
+        # تشغيل في thread منفصل
+        instant_thread = threading.Thread(target=self.run_instant_thread, daemon=True)
+        instant_thread.start()
+        
+        current_time = datetime.now().strftime("%H:%M:%S")
+        self.log_message(f"⚡ [{current_time}] بدء النظام الفوري مع الصور...")
+    
     def run_system_thread(self):
         """تشغيل النظام في thread منفصل"""
         
@@ -821,6 +870,49 @@ class AdvancedGUI:
             # إعادة تعيين الأزرار
             self.root.after(0, self.system_finished)
     
+    def run_instant_thread(self):
+        """تشغيل النظام الفوري في thread منفصل"""
+        
+        try:
+            # تخصيص دالة التسجيل
+            original_print = print
+            
+            def custom_print(message):
+                self.log_message(str(message))
+                original_print(message)
+            
+            # استبدال print مؤقتاً
+            import builtins
+            builtins.print = custom_print
+            
+            # تشغيل النظام الفوري
+            self.update_system_info_status("⚡ جاري الكشط والإرسال الفوري...")
+            
+            total_sent = self.instant_system.run_instant_system()
+            
+            # استعادة print الأصلي
+            builtins.print = original_print
+            
+            # تحديث النتائج
+            if total_sent > 0:
+                self.update_system_info_status(f"✅ تم إرسال {total_sent} عرض فورياً مع الصور")
+                self.log_message(f"🎯 انتهى النظام الفوري - {total_sent} عرض مرسل")
+                
+                # تحديث النتائج تلقائياً
+                self.root.after(2000, self.refresh_results)
+                
+            else:
+                self.update_system_info_status("❌ لم يتم العثور على عروض مناسبة")
+                self.log_message("❌ لا توجد عروض مناسبة للإرسال الفوري")
+            
+        except Exception as e:
+            self.log_message(f"❌ خطأ في النظام الفوري: {e}")
+            self.update_system_info_status("❌ حدث خطأ في النظام الفوري")
+        
+        finally:
+            # إعادة تعيين الأزرار
+            self.root.after(0, self.system_finished)
+    
     def update_system_info_status(self, status_text):
         """تحديث حالة النظام"""
         
@@ -833,6 +925,7 @@ class AdvancedGUI:
         """انتهاء تشغيل النظام"""
         
         self.start_btn.config(state="normal")
+        self.instant_btn.config(state="normal")
         self.stop_btn.config(state="disabled")
         self.is_running = False
         self.progress_bar.stop()

@@ -9,7 +9,7 @@ from datetime import datetime
 import sqlite3
 
 # استيراد النظام النهائي
-from ultimate_smart_system import UltimateSmartSystem
+from final_working_system import FinalWorkingSystem
 
 class UltimateGUI:
     """الواجهة النهائية مع اختيار الفئات"""
@@ -189,16 +189,16 @@ class UltimateGUI:
             relief='flat'
         ).pack(side='left', padx=5, fill='x', expand=True)
         
-        tk.Button(
-            row2_frame,
-            text="🔍 اختبار التحقق من البائع",
-            font=('Arial', 11),
-            bg='#9C27B0',
-            fg='white',
-            command=self.test_seller_verification,
-            height=2,
-            relief='flat'
-        ).pack(side='right', padx=5, fill='x', expand=True)
+                 tk.Button(
+             row2_frame,
+             text="🌐 اختبار مقارنة أسعار",
+             font=('Arial', 11),
+             bg='#9C27B0',
+             fg='white',
+             command=self.test_seller_verification,
+             height=2,
+             relief='flat'
+         ).pack(side='right', padx=5, fill='x', expand=True)
         
         # سجل الأحداث
         log_frame = tk.Frame(main_frame, bg=self.colors['card'], relief='ridge', bd=2)
@@ -713,8 +713,8 @@ class UltimateGUI:
             self.log("🚀 بدء النظام النهائي المحسن...")
             self.log("=" * 50)
             
-            # إنشاء النظام مع الإعدادات الحالية
-            self.system = UltimateSmartSystem()
+                         # إنشاء النظام مع الإعدادات الحالية
+             self.system = FinalWorkingSystem()
             
             # تطبيق الإعدادات
             self.system.min_discount = self.min_discount.get()
@@ -734,8 +734,8 @@ class UltimateGUI:
             self.log(f"🎯 العروض المستهدفة: {self.max_deals.get()} عرض")
             self.log(f"📂 الفئات المختارة: {len(selected_categories)} فئة")
             
-            # تشغيل النظام
-            deals = self.system.run_ultimate_system()
+                         # تشغيل النظام
+             deals = self.system.run_final_system()
             
             # عرض النتائج
             approved = [d for d in deals if d.get('is_approved', False)]
@@ -786,8 +786,8 @@ class UltimateGUI:
             try:
                 self.log("🔍 اختبار التحقق من البائع...")
                 
-                # إنشاء نظام للاختبار
-                test_system = UltimateSmartSystem()
+                                 # إنشاء نظام للاختبار
+                 test_system = FinalWorkingSystem()
                 
                 # ASIN تجريبي
                 test_asin = "B0C7CQT9ZS"
@@ -796,13 +796,16 @@ class UltimateGUI:
                 self.log(f"🔍 فحص ASIN: {test_asin}")
                 self.log(f"🌐 الرابط: {test_url}")
                 
-                # التحقق من البائع
-                is_amazon = test_system.verify_amazon_seller(test_url, test_asin)
+                                 # اختبار مقارنة الأسعار بدلاً من التحقق من البائع
+                 comparison_result = test_system.compare_prices_jumia_only("Samsung Galaxy Buds", 1200)
                 
-                if is_amazon:
-                    self.log("✅ تأكيد: البائع هو أمازون")
-                else:
-                    self.log("❌ تحذير: البائع ليس أمازون")
+                                 if comparison_result:
+                     jumia_price = comparison_result.get('jumia_price', 0)
+                     savings = comparison_result.get('savings', 0)
+                     self.log(f"✅ مقارنة ناجحة - Jumia: {jumia_price:.0f} جنيه")
+                     self.log(f"💰 توفير: {savings:.0f} جنيه")
+                 else:
+                     self.log("❌ فشل في مقارنة الأسعار")
                 
             except Exception as e:
                 self.log(f"❌ خطأ في اختبار التحقق: {e}")
@@ -816,22 +819,22 @@ class UltimateGUI:
             try:
                 self.results_text.delete(1.0, tk.END)
                 
-                if not os.path.exists("ultimate_deals.db"):
-                    self.results_text.insert(tk.END, "❌ لا توجد نتائج محفوظة\n")
-                    return
-                
-                conn = sqlite3.connect("ultimate_deals.db")
+                                 if not os.path.exists("final_deals.db"):
+                     self.results_text.insert(tk.END, "❌ لا توجد نتائج محفوظة\n")
+                     return
+                 
+                 conn = sqlite3.connect("final_deals.db")
                 cursor = conn.cursor()
                 
                 # العروض المرسلة اليوم
                 today = datetime.now().strftime('%Y-%m-%d')
-                cursor.execute('''
-                    SELECT name, price, discount_percent, quality_score, section, 
-                           is_verified_deal, is_amazon_seller
-                    FROM deals 
-                    WHERE is_sent = 1 AND date_found LIKE ?
-                    ORDER BY quality_score DESC
-                ''', (f'{today}%',))
+                                 cursor.execute('''
+                     SELECT name, price, discount_percent, quality_score, section, 
+                            is_verified_deal
+                     FROM deals 
+                     WHERE is_sent = 1 AND date_found LIKE ?
+                     ORDER BY quality_score DESC
+                 ''', (f'{today}%',))
                 
                 results = cursor.fetchall()
                 conn.close()
@@ -840,13 +843,12 @@ class UltimateGUI:
                     self.results_text.insert(tk.END, f"📊 العروض المرسلة اليوم ({len(results)} عرض):\n")
                     self.results_text.insert(tk.END, "=" * 60 + "\n\n")
                     
-                    for i, (name, price, discount, quality_score, section, verified, is_amazon) in enumerate(results, 1):
-                        verified_text = "✅ محقق" if verified else "⚠️ غير محقق"
-                        amazon_text = "✅ أمازون" if is_amazon else "❌ بائع آخر"
-                        
-                        self.results_text.insert(tk.END, f"{i}. {name[:50]}...\n")
-                        self.results_text.insert(tk.END, f"   💰 {price:.0f} جنيه | 🎉 {discount:.1f}% | 🎯 جودة: {quality_score:.0f}/100\n")
-                        self.results_text.insert(tk.END, f"   🏷️ {section} | {verified_text} | {amazon_text}\n\n")
+                                         for i, (name, price, discount, quality_score, section, verified) in enumerate(results, 1):
+                         verified_text = "✅ محقق" if verified else "⚠️ غير محقق"
+                         
+                         self.results_text.insert(tk.END, f"{i}. {name[:50]}...\n")
+                         self.results_text.insert(tk.END, f"   💰 {price:.0f} جنيه | 🎉 {discount:.1f}% | 🎯 جودة: {quality_score:.0f}/100\n")
+                         self.results_text.insert(tk.END, f"   🏷️ {section} | {verified_text} | ✅ أمازون\n\n")
                 else:
                     self.results_text.insert(tk.END, "❌ لا توجد عروض مرسلة اليوم\n")
                 
@@ -864,8 +866,8 @@ class UltimateGUI:
         
         if messagebox.askyesno("تأكيد", "هل تريد مسح جميع النتائج المحفوظة؟"):
             try:
-                if os.path.exists("ultimate_deals.db"):
-                    conn = sqlite3.connect("ultimate_deals.db")
+                                 if os.path.exists("final_deals.db"):
+                     conn = sqlite3.connect("final_deals.db")
                     conn.execute("DELETE FROM deals")
                     conn.commit()
                     conn.close()
